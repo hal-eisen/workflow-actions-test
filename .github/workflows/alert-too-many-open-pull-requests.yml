@@ -1,0 +1,62 @@
+name: Check Open Pull Requests and Notify Slack
+
+on:
+  # Allows you to run this workflow manually from the Actions tab in GitHub.
+  # You can also uncomment the 'schedule' block to run it at a specific time (e.g., daily).
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '0 8 * * *' # Runs every day at 8:00 AM UTC
+
+env:
+  # Configure your desired threshold here.
+  # If the number of open PRs exceeds this value, a Slack message will be sent.
+  PR_THRESHOLD: 5 # Example: Set to 5. Change as needed.
+
+jobs:
+  check_prs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Required to checkout the repository code.
+      pull-requests: read # Required for 'gh pr list' to get PR information.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install jq (JSON processor)
+        # jq is used to parse the JSON output from the GitHub CLI.
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get count of open pull requests
+        id: get_pr_count
+        # Use GitHub CLI to list open pull requests and count them using jq.
+        # GITHUB_TOKEN is automatically provided by GitHub Actions for authentication.
+        run: |
+          OPEN_PR_COUNT=$(gh pr list --state open --json number --jq '. | length')
+          echo "Found $OPEN_PR_COUNT open pull requests."
+          # Set the count as a step output, so it can be used in subsequent steps.
+          echo "pr_count=$OPEN_PR_COUNT" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use the GitHub Actions built-in token.
+
+      - name: Send Slack notification if PR count exceeds threshold
+        # This step will only run if the open PR count is greater than the configured threshold.
+        if: ${{ steps.get_pr_count.outputs.pr_count > env.PR_THRESHOLD }}
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          # The Slack message to send. Includes the current PR count and threshold.
+          payload: |
+            {
+              "text": ":warning: *Action Required: High Open Pull Request Count!* :warning:\n\nThere are currently *${{ steps.get_pr_count.outputs.pr_count }}* open pull requests in the repository.\nThis is above the configured threshold of *${{ env.PR_THRESHOLD }}*.\n\nPlease review and merge/close outstanding PRs to keep the repository healthy. <https://github.com/${{ github.repository }}/pulls?q=is:open+is:pr|View Open PRs>",
+              "attachments": [
+                {
+                  "text": "Repository: ${{ github.repository }}",
+                  "color": "#FFC107"
+                }
+              ]
+            }
+        env:
+          # SLACK_WEBHOOK_URL must be configured as a secret in your GitHub repository.
+          # Go to Repository Settings -> Secrets -> Actions and add a new secret named SLACK_WEBHOOK_URL.
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
